@@ -300,7 +300,7 @@ rescue_error(VALUE x) {
 
 	req->res->close = true;
 	agoo_res_set_message(req->res, message);
-	agoo_queue_wakeup(&agoo_server.con_queue);
+	// TBD wakeup con loop
     } else {
 /*
 	volatile VALUE	bt = rb_funcall(info, rb_intern("backtrace"), 0);
@@ -328,7 +328,7 @@ handle_base_inner(void *x) {
     }
     DATA_PTR(rr) = NULL;
     agoo_res_set_message(req->res, response_text(rres));
-    agoo_queue_wakeup(&agoo_server.con_queue);
+    // TBD wakeup con loop
 
     return Qfalse;
 }
@@ -400,7 +400,7 @@ handle_rack_inner(void *x) {
     }
     res = rb_funcall((VALUE)req->hook->handler, call_id, 1, env);
     if (req->res->con->hijacked) {
-	agoo_queue_wakeup(&agoo_server.con_queue);
+	// TBD wakeup con loop
 	return Qfalse;
     }
     rb_check_type(res, T_ARRAY);
@@ -504,7 +504,7 @@ handle_rack_inner(void *x) {
 	    rupgraded_create(req->res->con, handler, request_env(req, Qnil));
 	    t = agoo_sse_upgrade(req, t);
 	    agoo_res_set_message(req->res, t);
-	    agoo_queue_wakeup(&agoo_server.con_queue);
+	    // TBD wakeup con loop
 	    return Qfalse;
 	default:
 	    break;
@@ -535,7 +535,7 @@ handle_rack_inner(void *x) {
 	}
     }
     agoo_res_set_message(req->res, t);
-    agoo_queue_wakeup(&agoo_server.con_queue);
+    // TBD wakeup con loop
 
     return Qfalse;
 }
@@ -561,7 +561,7 @@ handle_wab_inner(void *x) {
     }
     DATA_PTR(rr) = NULL;
     agoo_res_set_message(req->res, response_text(rres));
-    agoo_queue_wakeup(&agoo_server.con_queue);
+    // TBD wakeup con loop
 
     return Qfalse;
 }
@@ -666,7 +666,7 @@ handle_protected(agooReq req, bool gvi) {
 	break;
     case FUNC_HOOK:
 	req->hook->func(req);
-	agoo_queue_wakeup(&agoo_server.con_queue);
+	// TBD wakeup con loop
 	break;
     default: {
 	char	buf[256];
@@ -675,7 +675,7 @@ handle_protected(agooReq req, bool gvi) {
 
 	req->res->close = true;
 	agoo_res_set_message(req->res, message);
-	agoo_queue_wakeup(&agoo_server.con_queue);
+	// TBD wakeup con loop
 	break;
     }
     }

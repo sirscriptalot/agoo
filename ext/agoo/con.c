@@ -1110,32 +1110,6 @@ queue_ready_io(void *ctx) {
 }
 
 static bool
-con_queue_ready_read(agooReady ready, void *ctx) {
-    agooConLoop		loop = (agooConLoop)ctx;
-    struct _agooErr	err = AGOO_ERR_INIT;
-    agooCon		c;
-    
-    agoo_queue_release(&agoo_server.con_queue);
-    while (NULL != (c = (agooCon)agoo_queue_pop(&agoo_server.con_queue, 0.0))) {
-	c->loop = loop;
-	if (AGOO_ERR_OK != agoo_ready_add(&err, ready, c->sock, &con_handler, c)) {
-	    agoo_log_cat(&agoo_error_cat, "Failed to add connection to manager. %s", err.msg);
-	    agoo_err_clear(&err);
-	}
-    }
-    return true;
-}
-
-static struct _agooHandler	con_queue_handler = {
-    .io = queue_ready_io,
-    .check = NULL,
-    .read = con_queue_ready_read,
-    .write = NULL,
-    .error = NULL, 
-    .destroy = NULL, 
-};
-
-static bool
 pub_queue_ready_read(agooReady ready, void *ctx) {
     agooConLoop	loop = (agooConLoop)ctx;
     agooPub	pub;
@@ -1156,23 +1130,28 @@ static struct _agooHandler	pub_queue_handler = {
     .destroy = NULL, 
 };
 
+int
+agoo_add_con_to_loop(agooErr err, agooConLoop loop, agooCon c) {
+    c->loop = loop;
+
+    return agoo_ready_add(err, loop->ready, c->sock, &con_handler, c);
+}
+
 void*
 agoo_con_loop(void *x) {
     agooConLoop		loop = (agooConLoop)x;
     struct _agooErr	err = AGOO_ERR_INIT;
     agooReady		ready = agoo_ready_create(&err);
     agooPub		pub;
-    agooCon		c;
-    int			con_queue_fd = agoo_queue_listen(&agoo_server.con_queue);
     int			pub_queue_fd = agoo_queue_listen(&loop->pub_queue);
-    
+
     if (NULL == ready) {
 	agoo_log_cat(&agoo_error_cat, "Failed to create connection manager. %s", err.msg);
 	exit(EXIT_FAILURE);
 	return NULL;
     }
-    if (AGOO_ERR_OK != agoo_ready_add(&err, ready, con_queue_fd, &con_queue_handler, loop) ||
-	AGOO_ERR_OK != agoo_ready_add(&err, ready, pub_queue_fd, &pub_queue_handler, loop)) {
+    loop->ready = ready;
+    if (AGOO_ERR_OK != agoo_ready_add(&err, ready, pub_queue_fd, &pub_queue_handler, loop)) {
 	agoo_log_cat(&agoo_error_cat, "Failed to add queue connection to manager. %s", err.msg);
 	exit(EXIT_FAILURE);
 
@@ -1181,13 +1160,6 @@ agoo_con_loop(void *x) {
     atomic_fetch_add(&agoo_server.running, 1);
     
     while (agoo_server.active) {
-	while (NULL != (c = (agooCon)agoo_queue_pop(&agoo_server.con_queue, 0.0))) {
-	    c->loop = loop;
-	    if (AGOO_ERR_OK != agoo_ready_add(&err, ready, c->sock, &con_handler, c)) {
-		agoo_log_cat(&agoo_error_cat, "Failed to add connection to manager. %s", err.msg);
-		agoo_err_clear(&err);
-	    }
-	}
 	while (NULL != (pub = (agooPub)agoo_queue_pop(&loop->pub_queue, 0.0))) {
 	    process_pub_con(pub);
 	}
@@ -1212,6 +1184,7 @@ agoo_conloop_create(agooErr err, int id) {
 	//DEBUG_ALLOC(mem_con, c);
 	loop->next = NULL;
 	agoo_queue_multi_init(&loop->pub_queue, 256, true, false);
+	loop->ready = NULL;
 	loop->id = id;
 	loop->res_head = NULL;
 	loop->res_tail = NULL;
@@ -1224,7 +1197,7 @@ agoo_conloop_create(agooErr err, int id) {
 void
 agoo_conloop_destroy(agooConLoop loop) {
     agooRes	res;
-    
+
     agoo_queue_cleanup(&loop->pub_queue);
     while (NULL != (res = loop->res_head)) {
 	loop->res_head = res->next;

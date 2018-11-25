@@ -11,11 +11,13 @@
 
 #include "con.h"
 #include "dtime.h"
+#include "err.h"
 #include "http.h"
 #include "hook.h"
 #include "log.h"
 #include "page.h"
 #include "pub.h"
+#include "ready.h"
 #include "upgraded.h"
 
 #include "server.h"
@@ -33,7 +35,6 @@ agoo_server_setup() {
     agoo_server.up_list = NULL;
     agoo_server.max_push_pending = 32;
     agoo_pages_init();
-    agoo_queue_multi_init(&agoo_server.con_queue, 1024, false, true);
     agoo_queue_multi_init(&agoo_server.eval_queue, 1024, true, true);
     agoo_server.loop_max = 4;
     if (0 < (i = sysconf(_SC_NPROCESSORS_ONLN))) {
@@ -71,6 +72,7 @@ listen_loop(void *x) {
     int			i;
     uint64_t		cnt = 0;
     agooBind		b;
+    agooConLoop		loop;
 
     // TBD support multiple sockets, count binds, allocate pollfd, setup
     //
@@ -121,7 +123,26 @@ listen_loop(void *x) {
 		    if (agoo_server.loop_max > agoo_server.loop_cnt && agoo_server.loop_cnt * LOOP_UP < con_cnt) {
 			add_con_loop();
 		    }
-		    agoo_queue_push(&agoo_server.con_queue, (void*)con);
+		    // Pick a read/write loop to put the connection on. Pick
+		    // the one with the least number of connections.
+		    loop = agoo_server.con_loops;
+		    if (NULL != loop->next) {
+			agooConLoop	lo;
+			int		lcnt;
+			int		low = agoo_ready_count(loop->ready);
+			
+			for (lo = loop->next; NULL != lo; lo = lo->next) {
+			    if ((lcnt = agoo_ready_count(lo->ready)) < low) {
+				loop = lo;
+				low = lcnt;
+			    }
+			}
+		    }
+		    if (AGOO_ERR_OK != agoo_add_con_to_loop(&err, loop, con)) {
+			agoo_log_cat(&agoo_error_cat, "Server with pid %d failed t establish a connection %llu on %s [%d]. %s",
+				     getpid(), (unsigned long long)cnt, b->id, con->sock, err.msg);
+			agoo_con_destroy(con);
+		    }
 		}
 	    }
 	    if (0 != (p->revents & (POLLERR | POLLHUP | POLLNVAL))) {
@@ -231,7 +252,6 @@ agoo_server_shutdown(const char *app_name, void (*stop)()) {
 	    agoo_server.binds = b->next;
 	    agoo_bind_destroy(b);
 	}
-	agoo_queue_cleanup(&agoo_server.con_queue);
 	while (NULL != (loop = agoo_server.con_loops)) {
 	    agoo_server.con_loops = loop->next;
 	    agoo_conloop_destroy(loop);

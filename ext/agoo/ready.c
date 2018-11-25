@@ -1,5 +1,6 @@
 // Copyright (c) 2018, Peter Ohler, All rights reserved.
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,11 +42,12 @@ typedef struct _link {
 } *Link;
 
 struct _agooReady {
-    Link	links;
-    int		lcnt;
-    double	next_check;
+    Link		links;
+    int			lcnt;
+    pthread_mutex_t	lock;
+    double		next_check;
 #if HAVE_SYS_EPOLL_H
-    int		epoll_fd;
+    int			epoll_fd;
 #else
     struct pollfd	*pa;
     struct pollfd	*pend;
@@ -80,6 +82,7 @@ agoo_ready_create(agooErr err) {
 	//DEBUG_ALLOC(mem_???, c);
 	ready->links = NULL;
 	ready->lcnt = 0;
+	pthread_mutex_init(&ready->lock, 0);
 	ready->next_check = dtime() + CHECK_FREQ;
 #if HAVE_SYS_EPOLL_H
 	if (0 > (ready->epoll_fd = epoll_create(1))) {
@@ -129,12 +132,14 @@ agoo_ready_add(agooErr		err,
     if (NULL == (link = link_create(err, fd, ctx, handler))) {
 	return err->code;
     }
+    pthread_mutex_lock(&ready->lock);
     link->next = ready->links;
     if (NULL != ready->links) {
 	ready->links->prev = link;
     }
     ready->links = link;
     ready->lcnt++;
+    pthread_mutex_unlock(&ready->lock);
 
 #if HAVE_SYS_EPOLL_H
     link->events = EPOLLIN;
@@ -172,6 +177,7 @@ agoo_ready_add(agooErr		err,
 
 static void
 ready_remove(agooReady ready, Link link) {
+    pthread_mutex_lock(&ready->lock);
     if (NULL == link->prev) {
 	ready->links = link->next;
     } else {
@@ -180,6 +186,7 @@ ready_remove(agooReady ready, Link link) {
     if (NULL != link->next) {
 	link->next->prev = link->prev;
     }
+    pthread_mutex_unlock(&ready->lock);
 #if HAVE_SYS_EPOLL_H
     {
 	struct epoll_event	event = {
@@ -204,15 +211,22 @@ ready_remove(agooReady ready, Link link) {
 int
 agoo_ready_go(agooErr err, agooReady ready) {
     double	now;
+    Link	links;
     Link	link;
     Link	next;
-    
+
 #if HAVE_SYS_EPOLL_H
     struct epoll_event	events[EPOLL_SIZE];
     struct epoll_event	*ep;
     int			cnt;
 
-    for (link = ready->links; NULL != link; link = link->next) {
+    // Removes are done from the same thread so no need to worry about
+    // that. Only inserts whcih occur at the head need to be protected.
+    pthread_mutex_lock(&ready->lock);
+    links = ready->links;
+    pthread_mutex_unlock(&ready->lock);
+    
+    for (link = links; NULL != link; link = link->next) {
 	struct epoll_event	event = {
 	    .events = 0,
 	    .data = {
@@ -272,8 +286,14 @@ agoo_ready_go(agooErr err, agooReady ready) {
     struct pollfd	*pp;
     int			i;
     
+    // Removes are done from the same thread so no need to worry about
+    // that. Only inserts whcih occur at the head need to be protected.
+    pthread_mutex_lock(&ready->lock);
+    links = ready->links;
+    pthread_mutex_unlock(&ready->lock);
+    
     // Setup the poll events.
-    for (link = ready->links, pp = ready->pa; NULL != link; link = link->next, pp++) {
+    for (link = links, pp = ready->pa; NULL != link; link = link->next, pp++) {
 	pp->fd = link->fd;
 	pp->revents = 0;
 	link->pp = pp;
@@ -303,7 +323,7 @@ agoo_ready_go(agooErr err, agooReady ready) {
 	return err->code;
     }
     if (0 < i) {
-	for (link = ready->links; NULL != link; link = next) {
+	for (link = links; NULL != link; link = next) {
 	    next = link->next;
 	    if (NULL == link->pp) {
 		continue;
@@ -334,7 +354,7 @@ agoo_ready_go(agooErr err, agooReady ready) {
     // Periodically check the connections to see if they are dead or not.
     now = dtime();
     if (ready->next_check <= now) {
-	for (link = ready->links; NULL != link; link = next) {
+	for (link = links; NULL != link; link = next) {
 	    next = link->next;
 	    if (NULL != link->handler->check) {
 		if (!link->handler->check(link->ctx, now)) {
@@ -354,4 +374,9 @@ agoo_ready_iterate(agooReady ready, void (*cb)(void *ctx, void *arg), void *arg)
     for (link = ready->links; NULL != link; link = link->next) {
 	cb(link->ctx, arg);
     }
+}
+
+int
+agoo_ready_count(agooReady ready) {
+    return ready->lcnt;
 }

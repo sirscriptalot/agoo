@@ -25,7 +25,6 @@ typedef struct _agooServer {
     bool			pedantic;
     bool			root_first;
     pthread_t			listen_thread;
-    struct _agooQueue		con_queue;
     agooHook			hooks;
     agooHook			hook404;
     agooBind			binds;

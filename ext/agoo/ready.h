@@ -37,5 +37,6 @@ extern int		agoo_ready_add(agooErr		err,
 				       void		*ctx);
 extern int		agoo_ready_go(agooErr err, agooReady ready);
 extern void		agoo_ready_iterate(agooReady ready, void (*cb)(void *ctx, void *arg), void *arg);
+extern int		agoo_ready_count(agooReady ready);
 
 #endif // AGOO_READY_H

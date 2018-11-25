@@ -17,6 +17,7 @@
 #define MAX_HEADER_SIZE	8192
 
 struct _agooUpgraded;
+struct _agooReady;
 struct _agooReq;
 struct _agooRes;
 struct _agooBind;
@@ -25,13 +26,13 @@ struct _agooQueue;
 typedef struct _agooConLoop {
     struct _agooConLoop	*next;
     struct _agooQueue	pub_queue;
+    struct _agooReady	*ready;
     pthread_t		thread;
     int			id;
-    // TBD use mutex for head and tail, volatile also
+    // reuse res
     struct _agooRes	*res_head;
     struct _agooRes	*res_tail;
-
-    pthread_mutex_t	lock;
+    pthread_mutex_t	lock; // for reas_head and res_tail
     
 } *agooConLoop;
     
@@ -65,6 +66,7 @@ extern const char*	agoo_con_header_value(const char *header, int hlen, const cha
 
 extern agooConLoop	agoo_conloop_create(agooErr err, int id);
 extern void		agoo_conloop_destroy(agooConLoop loop);
+extern int		agoo_add_con_to_loop(agooErr err, agooConLoop loop, agooCon c);
 
 extern bool		agoo_con_http_read(agooCon c);
 extern bool		agoo_con_http_write(agooCon c);
